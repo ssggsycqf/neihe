@@ -12,11 +12,21 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # ① 检出代码（升级到 v5，解决 Node.js 20 弃用警告）
       - name: Checkout code
         uses: actions/checkout@v5
 
-      # ② 设置 JDK 21（升级到 v5，解决 deprecation 警告）
+      # ====== 诊断：打印项目根目录文件，方便排查 ======
+      - name: Debug - List project files
+        run: |
+          echo "=== 项目根目录文件 ==="
+          ls -la
+          echo ""
+          echo "=== gradle 目录内容 ==="
+          ls -la gradle/wrapper/ 2>/dev/null || echo "⚠️ gradle/wrapper/ 目录不存在！"
+          echo ""
+          echo "=== gradlew 文件信息 ==="
+          file gradlew 2>/dev/null || echo "⚠️ gradlew 文件不存在！"
+
       - name: Set up JDK 21
         uses: actions/setup-java@v5
         with:
@@ -24,22 +34,39 @@ jobs:
           distribution: 'temurin'
           cache: gradle
 
-      # ③ 设置 Android SDK（参数名改为 packages，不是 install-packages）
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
         with:
           packages: 'platforms;android-36 build-tools;36.0.0 ndk;28.2.13676358'
           accept-android-sdk-licenses: true
 
-      # ④ 授予 gradlew 执行权限（解决 exit code 126 的核心修复）
-      - name: Grant execute permission for gradlew
-        run: chmod +x gradlew
+      # ====== 核心修复：确保 gradlew 可用 ======
+      - name: Ensure Gradle Wrapper exists and is executable
+        run: |
+          # 修复 Windows 换行符问题（CRLF → LF）
+          if [ -f gradlew ]; then
+            sed -i 's/\r$//' gradlew
+            chmod +x gradlew
+            echo "✅ gradlew 已存在，已修复权限和换行符"
+          else
+            echo "⚠️ gradlew 不存在，正在通过已安装的 Gradle 生成 Wrapper..."
+            # ubuntu-latest 预装了 Gradle，直接生成 wrapper
+            gradle wrapper --gradle-version 8.11.1
+            chmod +x gradlew
+            echo "✅ Gradle Wrapper 已生成"
+          fi
 
-      # ⑤ 构建 Debug APK
+          # 验证 wrapper jar 是否存在
+          if [ ! -f gradle/wrapper/gradle-wrapper.jar ]; then
+            echo "❌ gradle-wrapper.jar 仍然缺失！"
+            echo "请检查仓库中是否提交了 gradle/wrapper/ 目录"
+            exit 1
+          fi
+          echo "✅ Gradle Wrapper 验证通过"
+
       - name: Build Debug APK
         run: ./gradlew :app:assembleDebug --no-daemon
 
-      # ⑥ 上传 APK 产物
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
